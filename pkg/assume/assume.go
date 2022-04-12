@@ -2,11 +2,16 @@ package assume
 
 import (
 	"fmt"
+	"os/exec"
+	"runtime"
+	"strings"
 	"sync"
+	"time"
 
 	"os"
 
 	"github.com/AlecAivazis/survey/v2"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/common-fate/granted/pkg/browsers"
 	"github.com/common-fate/granted/pkg/cfaws"
 	"github.com/common-fate/granted/pkg/config"
@@ -23,6 +28,10 @@ func AssumeCommand(c *cli.Context) error {
 	assumeFlags, err := cfflags.New("assumeFlags", GlobalFlags(), c)
 	if err != nil {
 		return err
+	}
+
+	if assumeFlags.String("exec") != "" && runtime.GOOS == "windows" {
+		return fmt.Errorf("--exec flag is not currently supported on Windows. Let us know if you'd like support for this: https://github.com/common-fate/granted/issues/new")
 	}
 	var wg sync.WaitGroup
 	activeRoleProfile := assumeFlags.String("granted-active-aws-role-profile")
@@ -152,7 +161,8 @@ func AssumeCommand(c *cli.Context) error {
 					return err
 				}
 			}
-			fmt.Printf("GrantedOutput %s", url)
+			// return the url via stdout through the cli wrapper script
+			fmt.Print(MakeGrantedOutput(url))
 		} else {
 			browsers.PromoteUseFlags(labels)
 			fmt.Fprintf(color.Error, "\nOpening a console for %s in your browser...\n", profile.DisplayName)
@@ -164,24 +174,23 @@ func AssumeCommand(c *cli.Context) error {
 		if err != nil {
 			return err
 		}
-
-		// Allow setting a region via "-r" flag for terminal
-		if assumeFlags.String("region") != "" {
-			region = assumeFlags.String("region")
-		}
-		// DO NOT REMOVE, this interacts with the shell script that wraps the assume command, the shell script is what configures your shell environment vars
-		// to export more environment variables, add then in the assume and assume.fish scripts then append them to this output preparation function
-		// the shell script treats "None" as an emprty string and will not set a value for that positional output
-		output := PrepareStringsForShellScript([]string{creds.AccessKeyID, creds.SecretAccessKey, creds.SessionToken, profile.AWSConfig.Profile, region})
-		fmt.Printf("GrantedAssume %s %s %s %s %s", output...)
+		sessionExpiration := ""
 		green := color.New(color.FgGreen)
 		if creds.CanExpire {
+			sessionExpiration = creds.Expires.Format(time.RFC3339)
 			green.Fprintf(color.Error, "\n[%s](%s) session credentials will expire %s\n", profile.DisplayName, region, creds.Expires.Local().String())
 		} else {
 			green.Fprintf(color.Error, "\n[%s](%s) session credentials ready\n", profile.DisplayName, region)
 		}
+		if assumeFlags.String("exec") != "" {
+			return RunExecCommandWithCreds(assumeFlags.String("exec"), creds, region)
+		}
+		// DO NOT REMOVE, this interacts with the shell script that wraps the assume command, the shell script is what configures your shell environment vars
+		// to export more environment variables, add then in the assume and assume.fish scripts then append them to this output preparation function
+		// the shell script treats "None" as an emprty string and will not set a value for that positional output
+		output := PrepareStringsForShellScript([]string{creds.AccessKeyID, creds.SecretAccessKey, creds.SessionToken, profile.DisplayName, region, sessionExpiration})
+		fmt.Printf("GrantedAssume %s %s %s %s %s %s", output...)
 	}
-
 	return nil
 }
 
@@ -198,4 +207,38 @@ func PrepareStringsForShellScript(in []string) []interface{} {
 
 	}
 	return out
+}
+
+// RunExecCommandWithCreds takes in a command, which may be a program and arguments sperated by spaces
+// it splits these then runs the command with teh credentials as the environment.
+// The output of this is returned via the assume script to stdout so it may be processed further by piping
+func RunExecCommandWithCreds(cmd string, creds aws.Credentials, region string) error {
+	fmt.Print(MakeGrantedOutput(""))
+	args := strings.Split(cmd, " ")
+	c := exec.Command(args[0], args[1:]...)
+	c.Stdout = os.Stdout
+	c.Stderr = color.Error
+	c.Env = append(c.Env, EnvKeys(creds, region)...)
+	return c.Run()
+}
+
+// EnvKeys is used to set the env for the "exec" flag
+func EnvKeys(creds aws.Credentials, region string) []string {
+	return []string{"AWS_ACCESS_KEY_ID=" + creds.AccessKeyID,
+		"AWS_SECRET_ACCESS_KEY=" + creds.SecretAccessKey,
+		"AWS_SESSION_TOKEN=" + creds.SessionToken,
+		"AWS_REGION=" + region}
+}
+
+// MakeGrantedOutput formats a string to match the requirements of granted output in the shell script
+// Currently in windows, the grantedoutput is handled differently, as linux and mac support the exec cli flag whereas windows does not yet have support
+// this method may be changed in future if we implement support for "--exec" in windows
+func MakeGrantedOutput(s string) string {
+	out := "GrantedOutput"
+	if runtime.GOOS != "windows" {
+		out += "\n"
+	} else {
+		out += " "
+	}
+	return out + s
 }

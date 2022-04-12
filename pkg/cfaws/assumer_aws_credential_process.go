@@ -1,17 +1,10 @@
 package cfaws
 
 import (
-	"encoding/json"
-	"fmt"
-	"os"
-	"os/exec"
-	"strings"
-	"time"
-
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials/processcreds"
 	"github.com/bigkevmcd/go-configparser"
-	"github.com/fatih/color"
 	"github.com/urfave/cli/v2"
 )
 
@@ -19,81 +12,22 @@ import (
 type CredentialProcessAssumer struct {
 }
 
-type CredentialProcessJson struct {
-	Version         int
-	AccessKeyId     string
-	SecretAccessKey string
-	SessionToken    string
-	Expiration      string
-}
-
-// CredentialCapture implements the io.Writer interface and provides a means to capture the credential output from a credential_process call
-// as specified by aws documentation https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external.html
-type CredentialCapture struct {
-	creds *CredentialProcessJson
-}
-
-func (wr *CredentialCapture) Write(p []byte) (n int, err error) {
-	var dest CredentialProcessJson
-	err = json.Unmarshal(p, &dest)
-	if err != nil {
-		return fmt.Fprint(color.Error, string(p))
-	}
-	wr.creds = &dest
-	return len(p), nil
-}
-
-func (wr *CredentialCapture) Creds() (aws.Credentials, error) {
-	if wr.creds == nil {
-		return aws.Credentials{}, fmt.Errorf("no credential output from credential_process")
-	}
-	c := aws.Credentials{AccessKeyID: wr.creds.AccessKeyId, SecretAccessKey: wr.creds.SecretAccessKey, SessionToken: wr.creds.SessionToken}
-	if wr.creds.Expiration != "" {
-		c.CanExpire = true
-		t, err := time.Parse(time.RFC3339, wr.creds.Expiration)
-		if err != nil {
-			return aws.Credentials{}, fmt.Errorf("could not parse credentials expiry: %s", wr.creds.Expiration)
-		}
-		c.Expires = t
-	}
-	return c, nil
-
-}
-
-type Writer interface {
-	Write(p []byte) (n int, err error)
-}
-
 func (cpa *CredentialProcessAssumer) AssumeTerminal(c *cli.Context, cfg *CFSharedConfig, args2 []string) (creds aws.Credentials, region string, err error) {
-	var args []string
-	var command string
+	var credProcessCommand string
 	for k, v := range cfg.RawConfig {
 		if k == "credential_process" {
-			s := strings.Split(v, " ")
-			command = s[0]
-			args = s[1:]
+			credProcessCommand = v
 			break
 		}
 	}
-
-	// https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external.html
-	// attempt to run the credential process for this profile
-	cmd := exec.Command(command, args...)
-	capture := &CredentialCapture{}
-	cmd.Stdout = capture
-	cmd.Stdin = os.Stdin
-	cmd.Stderr = color.Error
-	err = cmd.Run()
-	if err != nil {
-		return creds, region, err
-	}
-	creds, err = capture.Creds()
-	if err != nil {
-		return creds, region, err
-	}
-	// return the region of the profile
+	p := processcreds.NewProvider(credProcessCommand)
 	region, _, err = cfg.Region(c.Context)
+	if err != nil {
+		return
+	}
+	creds, err = p.Retrieve(c.Context)
 	return creds, region, err
+
 }
 
 func (cpa *CredentialProcessAssumer) AssumeConsole(c *cli.Context, cfg *CFSharedConfig, args []string) (creds aws.Credentials, region string, err error) {

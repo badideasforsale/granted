@@ -4,7 +4,7 @@
 #ASSUME_n - the data from assumego
 $env:SHELL="ps"
 $env:GRANTED_ALIAS_CONFIGURED="true"
-$ASSUME_FLAG, $ASSUME_OUTPUT = `
+$ASSUME_FLAG, $ASSUME_1, $ASSUME_2, $ASSUME_3, $ASSUME_4, $ASSUME_5, $ASSUME_6= `
 $(assumego $args) -split '\s+'
 $env:ASSUME_STATUS = $LASTEXITCODE
 
@@ -16,8 +16,9 @@ if ( $ASSUME_FLAG -eq "GrantedDesume" ) {
     $env:AWS_ACCESS_KEY_ID = ""
     $env:AWS_SECRET_ACCESS_KEY = ""
     $env:AWS_SESSION_TOKEN = ""
-    $env:AWS_REGION = ""
     $env:AWS_PROFILE = ""
+    $env:AWS_REGION = ""
+    $env:AWS_SESSION_EXPIRATION = ""
     exit
 }
 
@@ -28,8 +29,9 @@ elseif ( $ASSUME_FLAG -eq "GrantedAssume") {
     $env:AWS_ACCESS_KEY_ID = ""
     $env:AWS_SECRET_ACCESS_KEY = ""
     $env:AWS_SESSION_TOKEN = ""
-    $env:AWS_REGION = ""
     $env:AWS_PROFILE = ""
+    $env:AWS_REGION = ""
+    $env:AWS_SESSION_EXPIRATION = ""
 
     $env:ASSUME_COMMAND=$args
     if ( $ASSUME_1 -ne "None" ) {
@@ -43,12 +45,16 @@ elseif ( $ASSUME_FLAG -eq "GrantedAssume") {
         $env:AWS_SESSION_TOKEN = $ASSUME_3
     }
 
-    if ( $ASSUME_5 -ne "None" ) {
-        $env:ASSUME_PROFILE = $ASSUME_5
+    if ( $ASSUME_4 -ne "None" ) {
+        $env:ASSUME_PROFILE = $ASSUME_4
     }
     
-    if ( $ASSUME_4 -ne "None" ) {
-        $env:AWS_REGION = $ASSUME_4
+    if ( $ASSUME_5 -ne "None" ) {
+        $env:AWS_REGION = $ASSUME_5
+    }
+
+    if ( $ASSUME_6 -ne "None" ) {
+        $env:AWS_SESSION_EXPIRATION = $ASSUME_6
     }
 }
 

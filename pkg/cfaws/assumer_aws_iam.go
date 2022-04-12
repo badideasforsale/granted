@@ -5,6 +5,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/bigkevmcd/go-configparser"
 	"github.com/urfave/cli/v2"
@@ -21,6 +22,17 @@ func (aia *AwsIamAssumer) AssumeTerminal(c *cli.Context, cfg *CFSharedConfig, ar
 	opts := []func(*config.LoadOptions) error{
 		// load the config profile
 		config.WithSharedConfigProfile(cfg.AWSConfig.Profile),
+		config.WithAssumeRoleCredentialOptions(func(aro *stscreds.AssumeRoleOptions) {
+			// set the token provider up
+			aro.TokenProvider = MfaTokenProvider
+
+			// If the mfa_serial is defined on the root profile, we need to set it in this config so that the aws SDK knows to prompt for MFA token
+			if len(cfg.Parents) > 0 {
+				if cfg.Parents[0].AWSConfig.MFASerial != "" {
+					aro.SerialNumber = aws.String(cfg.Parents[0].AWSConfig.MFASerial)
+				}
+			}
+		}),
 	}
 
 	//load the creds from the credentials file
@@ -63,13 +75,22 @@ func (aia *AwsIamAssumer) ProfileMatchesType(rawProfile configparser.Dict, parse
 
 // GetFederationToken is used when launching a console session with longlived IAM credentials profiles
 func getFederationToken(ctx context.Context, c *CFSharedConfig) (creds aws.Credentials, region string, err error) {
-	cfg := aws.NewConfig()
+	opts := []func(*config.LoadOptions) error{
+		// load the config profile
+
+		config.WithSharedConfigProfile(c.AWSConfig.Profile),
+	}
 	region, _, err = c.Region(ctx)
 	if err != nil {
 		return creds, region, err
 	}
-	cfg.Region = region
-	client := sts.NewFromConfig(*cfg)
+	//load the creds from the credentials file
+	cfg, err := config.LoadDefaultConfig(ctx, opts...)
+	if err != nil {
+		return creds, region, err
+	}
+
+	client := sts.NewFromConfig(cfg)
 	out, err := client.GetFederationToken(ctx, &sts.GetFederationTokenInput{Name: aws.String("Granted@" + c.DisplayName)})
 	if err != nil {
 		return creds, region, err
